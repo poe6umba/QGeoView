@@ -23,6 +23,17 @@
 #include <QtSql/QSqlError>
 #include <QtConcurrent/QtConcurrent>
 #include <QDir>
+#include <QPainter>
+
+QGVLayerTilesOnline::QGVLayerTilesOnline()
+{
+    mNoDataImage = QImage(256, 256, QImage::Format_ARGB32);
+    mNoDataImage.fill(Qt::red);
+    QPainter p(&mNoDataImage);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::black);
+    p.drawText(mNoDataImage.rect(), Qt::AlignCenter, "NO DATA \n CHECK INTERNET CONNECTION");
+}
 
 QGVLayerTilesOnline::~QGVLayerTilesOnline()
 {
@@ -62,26 +73,27 @@ void QGVLayerTilesOnline::cancel(const QGV::GeoTilePos& tilePos)
 
 void QGVLayerTilesOnline::onReplyFinished(QNetworkReply* reply, const QGV::GeoTilePos& tilePos)
 {
+    auto tile = new QGVImage();
+    tile->setGeometry(tilePos.toGeoRect());
+
     if (reply->error() != QNetworkReply::NoError) {
         if (reply->error() != QNetworkReply::OperationCanceledError) {
             qgvCritical() << "ERROR" << reply->errorString();
         }
         removeReply(tilePos);
-        if (loadTileFromCache(tilePos).isEmpty()) {
+        // check db, our last hope to see tile
+        auto rawData = loadTileFromCache(tilePos);
+        if (rawData.isEmpty()) {
+            tile->loadImage(mNoDataImage);
+            onTile(tilePos, tile);
             return;
         } else {
-            const auto rawImage = loadTileFromCache(tilePos);
-            auto tile = new QGVImage();
-            tile->setGeometry(tilePos.toGeoRect());
-            tile->loadImage(rawImage);
-            cacheTile(rawImage, tilePos);
+            tile->loadImage(rawData);
             onTile(tilePos, tile);
             return;
         }
     }
     const auto rawImage = reply->readAll();
-    auto tile = new QGVImage();
-    tile->setGeometry(tilePos.toGeoRect());
     tile->loadImage(rawImage);
     tile->setProperty("drawDebug",
                       QString("%1\ntile(%2,%3,%4)")
@@ -90,8 +102,10 @@ void QGVLayerTilesOnline::onReplyFinished(QNetworkReply* reply, const QGV::GeoTi
                               .arg(tilePos.pos().x())
                               .arg(tilePos.pos().y()));
     removeReply(tilePos);
-    cacheTile(rawImage, tilePos);
     onTile(tilePos, tile);
+    QFuture<void> future = QtConcurrent::run([this, rawImage, tilePos]() {
+        cacheTile(rawImage, tilePos);
+    });
 }
 
 void QGVLayerTilesOnline::removeReply(const QGV::GeoTilePos& tilePos)
@@ -128,6 +142,7 @@ void QGVLayerTilesOnline::initDatabase()
 
 void QGVLayerTilesOnline::cacheTile(const QByteArray &rawData, const QGV::GeoTilePos& tilePos)
 {
+    QMutexLocker locker(&mDbMutex);
     if (!mDb.isOpen()) {
         initDatabase();
     }
@@ -141,6 +156,10 @@ void QGVLayerTilesOnline::cacheTile(const QByteArray &rawData, const QGV::GeoTil
 
     if (!query.exec()) {
         qDebug() << "Failed to cache tile: " << query.lastError();
+        return;
+    }
+    if (query.isActive()) {
+        query.finish();
     }
 }
 

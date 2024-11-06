@@ -22,12 +22,14 @@
 
 #include <QNetworkReply>
 #include <QtSql/QSqlDatabase>
+#include <QMutex>
 
 class QGV_LIB_DECL QGVLayerTilesOnline : public QGVLayerTiles
 {
     Q_OBJECT
 
 public:
+    QGVLayerTilesOnline();
     ~QGVLayerTilesOnline();
 
 protected:
@@ -45,4 +47,6 @@ private:
 private:
     QMap<QGV::GeoTilePos, QNetworkReply*> mRequest;
     QSqlDatabase mDb;
+    QMutex mDbMutex;
+    QImage mNoDataImage;
 };

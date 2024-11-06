@@ -22,6 +22,7 @@ find_package(Qt${QT_VERSION} REQUIRED COMPONENTS
      Widgets
      Network
      Sql
+     Concurrent
 )
 
 add_library(qgeoview SHARED
@@ -96,6 +97,7 @@ target_link_libraries(qgeoview
         Qt${QT_VERSION}::Widgets
         Qt${QT_VERSION}::Network
         Qt${QT_VERSION}::Sql
+        Qt${QT_VERSION}::Concurrent
 )
 
 add_library(QGeoView ALIAS qgeoview)
