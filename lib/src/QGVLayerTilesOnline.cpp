@@ -19,6 +19,11 @@
 #include "QGVLayerTilesOnline.h"
 #include "Raster/QGVImage.h"
 
+#include <QtSql/QSqlQuery>
+#include <QtSql/QSqlError>
+#include <QtConcurrent/QtConcurrent>
+#include <QDir>
+
 QGVLayerTilesOnline::~QGVLayerTilesOnline()
 {
     qDeleteAll(mRequest);
@@ -62,7 +67,17 @@ void QGVLayerTilesOnline::onReplyFinished(QNetworkReply* reply, const QGV::GeoTi
             qgvCritical() << "ERROR" << reply->errorString();
         }
         removeReply(tilePos);
-        return;
+        if (loadTileFromCache(tilePos).isEmpty()) {
+            return;
+        } else {
+            const auto rawImage = loadTileFromCache(tilePos);
+            auto tile = new QGVImage();
+            tile->setGeometry(tilePos.toGeoRect());
+            tile->loadImage(rawImage);
+            cacheTile(rawImage, tilePos);
+            onTile(tilePos, tile);
+            return;
+        }
     }
     const auto rawImage = reply->readAll();
     auto tile = new QGVImage();
@@ -75,6 +90,7 @@ void QGVLayerTilesOnline::onReplyFinished(QNetworkReply* reply, const QGV::GeoTi
                               .arg(tilePos.pos().x())
                               .arg(tilePos.pos().y()));
     removeReply(tilePos);
+    cacheTile(rawImage, tilePos);
     onTile(tilePos, tile);
 }
 
@@ -88,4 +104,61 @@ void QGVLayerTilesOnline::removeReply(const QGV::GeoTilePos& tilePos)
     reply->abort();
     reply->close();
     reply->deleteLater();
+}
+
+void QGVLayerTilesOnline::initDatabase()
+{
+    mDb = QSqlDatabase::addDatabase("QSQLITE", getName());
+    mDb.setDatabaseName(QDir::currentPath() + "/" + getName() + ".db");
+    mDb.open();
+
+    QString createTableQuery = R"(CREATE TABLE IF NOT EXISTS Tiles (
+                                          zoom INTEGER,
+                                          pos_x INTEGER,
+                                          pos_y INTEGER,
+                                          data BLOB,
+                                          PRIMARY KEY (zoom, pos_x, pos_y)
+                                        ))";
+    QSqlQuery createQuery(mDb);
+    if (!createQuery.exec(createTableQuery)) {
+        qDebug() << "Failed to create table: " << createQuery.lastError();
+        return;
+    }
+}
+
+void QGVLayerTilesOnline::cacheTile(const QByteArray &rawData, const QGV::GeoTilePos& tilePos)
+{
+    if (!mDb.isOpen()) {
+        initDatabase();
+    }
+
+    QSqlQuery query(mDb);
+    query.prepare("INSERT OR IGNORE INTO Tiles (zoom, pos_x, pos_y, data) VALUES (?, ?, ?, ?)");
+    query.addBindValue(tilePos.zoom());
+    query.addBindValue(tilePos.pos().x());
+    query.addBindValue(tilePos.pos().y());
+    query.addBindValue(rawData);
+
+    if (!query.exec()) {
+        qDebug() << "Failed to cache tile: " << query.lastError();
+    }
+}
+
+const QByteArray QGVLayerTilesOnline::loadTileFromCache(const QGV::GeoTilePos& tilePos)
+{
+    if (!mDb.isOpen()) {
+        initDatabase();
+    }
+
+    QSqlQuery query(mDb);
+    query.prepare("SELECT data FROM Tiles WHERE zoom = ? AND pos_x = ? AND pos_y = ?");
+    query.addBindValue(tilePos.zoom());
+    query.addBindValue(tilePos.pos().x());
+    query.addBindValue(tilePos.pos().y());
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toByteArray();
+    } else {
+        return QByteArray();
+    }
 }

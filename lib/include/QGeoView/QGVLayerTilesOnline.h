@@ -21,6 +21,7 @@
 #include "QGVLayerTiles.h"
 
 #include <QNetworkReply>
+#include <QtSql/QSqlDatabase>
 
 class QGV_LIB_DECL QGVLayerTilesOnline : public QGVLayerTiles
 {
@@ -37,7 +38,11 @@ private:
     void cancel(const QGV::GeoTilePos& tilePos) override;
     void onReplyFinished(QNetworkReply* reply, const QGV::GeoTilePos& tilePos);
     void removeReply(const QGV::GeoTilePos& tilePos);
+    void initDatabase();
+    void cacheTile(const QByteArray& rawData, const QGV::GeoTilePos& tilePos);
+    const QByteArray loadTileFromCache(const QGV::GeoTilePos& tilePos);
 
 private:
     QMap<QGV::GeoTilePos, QNetworkReply*> mRequest;
+    QSqlDatabase mDb;
 };
